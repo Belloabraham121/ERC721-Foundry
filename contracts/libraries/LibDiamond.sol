@@ -59,6 +59,16 @@ library LibDiamond {
 
         mapping(address => Users) users;
         mapping(address => uint256) stakebalances;
+
+        bytes32 merkleRoot;
+
+        mapping(address => bool) hasClaimed;
+
+        uint256 presalePrice; 
+        uint256 minPurchase; 
+        uint256 maxPurchase; 
+        uint256 totalsupply; 
+        mapping(address => uint256) presalePurchases;
     }
 
     struct Users {
