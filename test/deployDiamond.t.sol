@@ -11,6 +11,8 @@ import "../contracts/facets/ERC20Facet.sol";
 import "../contracts/Diamond.sol";
 
 import "./helpers/DiamondUtils.sol";
+import "../contracts/facets/PresaleFacet.sol";
+import "../contracts/facets/ERC721Facet.sol";
 
 contract DiamondDeployer is DiamondUtils, IDiamondCut {
     //contract types of facets to be deployed
@@ -20,6 +22,8 @@ contract DiamondDeployer is DiamondUtils, IDiamondCut {
     OwnershipFacet ownerF;
     ERC20Facet erc20Facet;
     StakingFacet stakingFacet;
+    ERC721Facet erc721Facet;
+    PresaleFacet presaleFacet;
 
     function testDeployDiamond() public {
         //deploy facets
@@ -28,11 +32,13 @@ contract DiamondDeployer is DiamondUtils, IDiamondCut {
         dLoupe = new DiamondLoupeFacet();
         ownerF = new OwnershipFacet();
         erc20Facet = new ERC20Facet();
+        presaleFacet = new PresaleFacet();
+        erc721Facet = new ERC721Facet();
 
         //upgrade diamond with facets
 
         //build cut struct
-        FacetCut[] memory cut = new FacetCut[](3);
+        FacetCut[] memory cut = new FacetCut[](5);
 
         cut[0] = (
             FacetCut({
@@ -57,6 +63,19 @@ contract DiamondDeployer is DiamondUtils, IDiamondCut {
                 functionSelectors: generateSelectors("ERC20Facet")
             })
         );
+
+        cut[3] = IDiamondCut.FacetCut({
+            facetAddress: address(presaleFacet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: getSelectors("PresaleFacet")
+        });
+
+        cut[4] = IDiamondCut.FacetCut({
+            facetAddress: address(erc721Facet),
+            action: IDiamondCut.FacetCutAction.Add,
+            functionSelectors: getSelectors("ERC721Facet")
+        });
+
 
         //upgrade diamond
         IDiamondCut(address(diamond)).diamondCut(cut, address(0x0), "");
@@ -115,10 +134,76 @@ contract DiamondDeployer is DiamondUtils, IDiamondCut {
         assertEq(ERC20Facet(address(diamond)).balanceOf(address(this)), initialSupply - transferAmount - transferFromAmount, "Incorrect sender balance after transferFrom");
         assertEq(ERC20Facet(address(diamond)).allowance(address(this), spender), approvalAmount - transferFromAmount, "Incorrect allowance after transferFrom");
 
-
+        vm.prank(owner);
+        PresaleFacet(address(diamond)).setPresaleParameters(5 ether);
 
     }
 
+
+    function testSetPresaleParameters() public {
+        vm.prank(owner);
+        PresaleFacet(address(diamond)).setPresaleParameters(10 ether);
+
+        (uint256 price, uint256 minPurchase, uint256 maxPurchase) = PresaleFacet(address(diamond)).getPresaleInfo();
+        assertEq(price, 1 ether);
+        assertEq(minPurchase, 0.01 ether);
+        assertEq(maxPurchase, 10 ether);
+    }
+
+    function testBuyPresaleMinimum() public {
+        vm.deal(user1, 1 ether);
+        vm.prank(user1);
+        PresaleFacet(address(diamond)).buyPresale{value: 0.01 ether}();
+
+        uint256 pieces = PresaleFacet(address(diamond)).getPresalePurchases(user1);
+        assertEq(pieces, 0.3 ether / 1 ether * 30); // 0.3 pieces
+    }
+
+    function testBuyPresaleFullNFT() public {
+        vm.deal(user1, 2 ether);
+        vm.prank(user1);
+        PresaleFacet(address(diamond)).buyPresale{value: 1 ether}();
+
+        uint256 pieces = PresaleFacet(address(diamond)).getPresalePurchases(user1);
+        assertEq(pieces, 30);
+
+        uint256 balance = ERC721Facet(address(diamond)).balanceOf(user1);
+        assertEq(balance, 1);
+    }
+
+    function testBuyPresaleMultipleNFTs() public {
+        vm.deal(user1, 5 ether);
+        vm.prank(user1);
+        PresaleFacet(address(diamond)).buyPresale{value: 3.5 ether}();
+
+        uint256 pieces = PresaleFacet(address(diamond)).getPresalePurchases(user1);
+        assertEq(pieces, 105); // 3.5 * 30 = 105 pieces
+
+        uint256 balance = ERC721Facet(address(diamond)).balanceOf(user1);
+        assertEq(balance, 3); // 3 full NFTs
+    }
+
+    function testFailBuyPresaleBelowMinimum() public {
+        vm.deal(user1, 1 ether);
+        vm.prank(user1);
+        PresaleFacet(address(diamond)).buyPresale{value: 0.009 ether}();
+    }
+
+    function testFailBuyPresaleAboveMaximum() public {
+        vm.deal(user1, 10 ether);
+        vm.prank(user1);
+        PresaleFacet(address(diamond)).buyPresale{value: 6 ether}();
+    }
+
+    // Helper function to get function selectors from a contract
+    function getSelectors(string memory _facetName) internal returns (bytes4[] memory selectors) {
+        string[] memory cmd = new string[](3);
+        cmd[0] = "node";
+        cmd[1] = "scripts/genSelectors.js";
+        cmd[2] = _facetName;
+        bytes memory res = vm.ffi(cmd);
+        selectors = abi.decode(res, (bytes4[]));
+    }
 
 
     function diamondCut(
